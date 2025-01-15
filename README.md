@@ -40,4 +40,4 @@ number of tuned hyperparameters and effect encodings for state-level information
 3. Open `analysis.Rmd` and run the analysis
 
 ## Viewing Results
-- View the rendered analysis [here](docs/analysis.html)
+- View the rendered analysis [here](https://vbashyakarla.github.io/tornado-mag/analysis.html)
