@@ -9,15 +9,104 @@ Varoon Bashyakarla
 knitr::opts_chunk$set(echo = TRUE, fig.path = "docs/images/")
 
 library(embed)
+```
+
+    ## Loading required package: recipes
+
+    ## Loading required package: dplyr
+
+    ## 
+    ## Attaching package: 'dplyr'
+
+    ## The following objects are masked from 'package:stats':
+    ## 
+    ##     filter, lag
+
+    ## The following objects are masked from 'package:base':
+    ## 
+    ##     intersect, setdiff, setequal, union
+
+    ## 
+    ## Attaching package: 'recipes'
+
+    ## The following object is masked from 'package:stats':
+    ## 
+    ##     step
+
+``` r
 library(finetune)
+```
+
+    ## Loading required package: tune
+
+``` r
 library(ggrepel)
+```
+
+    ## Loading required package: ggplot2
+
+``` r
 library(knitr)
 library(RColorBrewer)
 library(tidymodels)
-library(tidyverse)
-library(vip)
-library(xgboost)
+```
 
+    ## ── Attaching packages ──────────────────────────────────────── tidymodels 1.2.0 ──
+
+    ## ✔ broom        1.0.7     ✔ rsample      1.2.1
+    ## ✔ dials        1.3.0     ✔ tibble       3.2.1
+    ## ✔ infer        1.0.7     ✔ tidyr        1.3.1
+    ## ✔ modeldata    1.4.0     ✔ workflows    1.1.4
+    ## ✔ parsnip      1.2.1     ✔ workflowsets 1.1.0
+    ## ✔ purrr        1.0.2     ✔ yardstick    1.3.1
+
+    ## ── Conflicts ─────────────────────────────────────────── tidymodels_conflicts() ──
+    ## ✖ purrr::discard() masks scales::discard()
+    ## ✖ dplyr::filter()  masks stats::filter()
+    ## ✖ dplyr::lag()     masks stats::lag()
+    ## ✖ recipes::step()  masks stats::step()
+    ## • Use suppressPackageStartupMessages() to eliminate package startup messages
+
+``` r
+library(tidyverse)
+```
+
+    ## ── Attaching core tidyverse packages ────────────────────────── tidyverse 2.0.0 ──
+    ## ✔ forcats   1.0.0     ✔ readr     2.1.5
+    ## ✔ lubridate 1.9.4     ✔ stringr   1.5.1
+
+    ## ── Conflicts ──────────────────────────────────────────── tidyverse_conflicts() ──
+    ## ✖ readr::col_factor() masks scales::col_factor()
+    ## ✖ purrr::discard()    masks scales::discard()
+    ## ✖ dplyr::filter()     masks stats::filter()
+    ## ✖ stringr::fixed()    masks recipes::fixed()
+    ## ✖ dplyr::lag()        masks stats::lag()
+    ## ✖ readr::spec()       masks yardstick::spec()
+    ## ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+
+``` r
+library(vip)
+```
+
+    ## 
+    ## Attaching package: 'vip'
+    ## 
+    ## The following object is masked from 'package:utils':
+    ## 
+    ##     vi
+
+``` r
+library(xgboost)
+```
+
+    ## 
+    ## Attaching package: 'xgboost'
+    ## 
+    ## The following object is masked from 'package:dplyr':
+    ## 
+    ##     slice
+
+``` r
 theme_set(theme_linedraw())
 ```
 
@@ -28,10 +117,10 @@ tornado_df <- read_csv("data/tornado.csv")
 ```
 
     ## Rows: 68693 Columns: 27
-    ## ── Column specification ───────────────────────────────────────────────────────────────────────────────────────────
+    ## ── Column specification ──────────────────────────────────────────────────────────
     ## Delimiter: ","
     ## chr   (2): tz, st
-    ## dbl  (21): om, yr, mo, dy, stf, mag, inj, fat, loss, slat, slon, elat, elon, len, wid, ns, sn, f1, f2, f3, f4
+    ## dbl  (21): om, yr, mo, dy, stf, mag, inj, fat, loss, slat, slon, elat, elon, l...
     ## lgl   (1): fc
     ## dttm  (1): datetime_utc
     ## date  (1): date
@@ -54,7 +143,8 @@ tornado_df |>
   scale_y_continuous(labels = scales::comma_format())
 ```
 
-    ## Warning: Removed 756 rows containing non-finite outside the scale range (`stat_count()`).
+    ## Warning: Removed 756 rows containing non-finite outside the scale range
+    ## (`stat_count()`).
 
 ![](docs/images/severity-dist-1.png)<!-- -->
 
@@ -73,7 +163,8 @@ tornado_df |>
   labs(fill = "Magnitude Estimated")
 ```
 
-    ## Warning: Removed 756 rows containing non-finite outside the scale range (`stat_count()`).
+    ## Warning: Removed 756 rows containing non-finite outside the scale range
+    ## (`stat_count()`).
 
 ![](docs/images/severity-by-est-dist-1.png)<!-- -->
 
@@ -200,7 +291,7 @@ tornado_recipe
 
     ## 
 
-    ## ── Recipe ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+    ## ── Recipe ────────────────────────────────────────────────────────────────────────
 
     ## 
 
@@ -238,25 +329,25 @@ prep(tornado_recipe) |> bake(new_data = NULL) |> glimpse()
 
     ## Rows: 31,136
     ## Columns: 19
-    ## $ st             <dbl> 1.2663014, 1.1072304, 1.0354342, 1.0354342, 1.0864012, 1.0864012, 1.1072304, 1.1502294, 1.…
-    ## $ inj            <dbl> 0, 3, 0, 32, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0,…
-    ## $ fat            <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ len            <dbl> 15.8, 2.0, 2.3, 7.7, 2.0, 0.5, 0.1, 0.2, 2.0, 19.8, 0.5, 2.0, 2.0, 1.0, 3.8, 7.3, 0.7, 0.1…
-    ## $ wid            <dbl> 10, 37, 233, 100, 33, 27, 10, 10, 100, 10, 77, 10, 27, 100, 50, 100, 333, 10, 10, 250, 880…
-    ## $ ns             <dbl> 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, …
-    ## $ mag            <dbl> 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, …
-    ## $ date_year      <int> 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, …
-    ## $ date_month_Feb <dbl> 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ date_month_Mar <dbl> 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ date_month_Apr <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ date_month_May <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, …
-    ## $ date_month_Jun <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ date_month_Jul <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ date_month_Aug <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ date_month_Sep <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ date_month_Oct <dbl> 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ date_month_Nov <dbl> 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
-    ## $ date_month_Dec <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ st             <dbl> 1.2663014, 1.1072304, 1.0354342, 1.0354342, 1.0864012, 1.…
+    ## $ inj            <dbl> 0, 3, 0, 32, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,…
+    ## $ fat            <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ len            <dbl> 15.8, 2.0, 2.3, 7.7, 2.0, 0.5, 0.1, 0.2, 2.0, 19.8, 0.5, …
+    ## $ wid            <dbl> 10, 37, 233, 100, 33, 27, 10, 10, 100, 10, 77, 10, 27, 10…
+    ## $ ns             <dbl> 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, …
+    ## $ mag            <dbl> 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, …
+    ## $ date_year      <int> 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, 1950, 195…
+    ## $ date_month_Feb <dbl> 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ date_month_Mar <dbl> 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ date_month_Apr <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ date_month_May <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, …
+    ## $ date_month_Jun <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ date_month_Jul <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ date_month_Aug <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ date_month_Sep <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ date_month_Oct <dbl> 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ date_month_Nov <dbl> 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
+    ## $ date_month_Dec <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, …
 
 ## Model Specification and Hyperparameter Tuning via Racing
 
@@ -275,18 +366,18 @@ xgb_workflow <- workflow(preprocessor = tornado_recipe, spec = xgb_details)
 xgb_workflow
 ```
 
-    ## ══ Workflow ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+    ## ══ Workflow ══════════════════════════════════════════════════════════════════════
     ## Preprocessor: Recipe
     ## Model: boost_tree()
     ## 
-    ## ── Preprocessor ───────────────────────────────────────────────────────────────────────────────────────────────────
+    ## ── Preprocessor ──────────────────────────────────────────────────────────────────
     ## 3 Recipe Steps
     ## 
     ## • step_lencode_glm()
     ## • step_date()
     ## • step_dummy()
     ## 
-    ## ── Model ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+    ## ── Model ─────────────────────────────────────────────────────────────────────────
     ## Boosted Tree Model Specification (regression)
     ## 
     ## Main Arguments:
@@ -449,11 +540,15 @@ extract_workflow(tornado_fit) |>
 
 ![](docs/images/feat-imp-plot-1.png)<!-- -->
 
-The features deemed important by the model are the following: \* The
-number of injuries \* The length of the tornado \* The year in which the
-tornado occurred \* The width of the tornado \* The number of fatalities
-resulting from the tornado \* The state in which the tornado started \*
-Month-level data
+The features deemed important by the model are the following:
+
+- The number of injuries
+- The length of the tornado
+- The year in which the tornado occurred
+- The width of the tornado
+- The number of fatalities resulting from the tornado
+- The state in which the tornado started
+- Month-level data
 
 These predictors behave as expected. The importance of the state
 variable suggests the the effect encoding was sensible.
