@@ -141,6 +141,8 @@ tornado_folds # 10 folds by default
 
 ## Pre-Processing and Feature Engineering
 
+The code below uses a generalized linear model to estimate effect encodings for state-level variables.
+
 ```{r}
 tornado_recipe <- 
   recipe(mag ~ date + st + inj + fat + len + wid + ns,
@@ -168,6 +170,10 @@ Here, we are modeling the tornado's magnitude as a function of:
 # For debugging
 prep(tornado_recipe) |> bake(new_data = NULL) |> glimpse()
 ```
+
+As the output above shows, the state-level information is not one-hot encoded (which would have increased the
+number of inputs dramatically) but remains a single column in which each value represents a state-specific
+deviation from the data when considering all states together. 
 
 ## Model Specification and Hyperparameter Tuning via Racing
 
