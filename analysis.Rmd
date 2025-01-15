@@ -7,6 +7,9 @@ output:
     toc: true
     number_sections: true
     output_dir: "docs"
+    toc_float: true
+    code_folding: show
+    theme: simplex
   github_document: default
 editor_options: 
   chunk_output_type: console
@@ -14,7 +17,7 @@ editor_options:
 
 ## Setup
 
-```{r setup, include=TRUE}
+```{r setup, include=TRUE, message=FALSE}
 knitr::opts_chunk$set(echo = TRUE, fig.path = "docs/images/")
 
 library(embed)
