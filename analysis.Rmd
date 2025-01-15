@@ -1,0 +1,295 @@
+---
+title: "analysis"
+author: "Varoon Bashyakarla"
+date: "2025-01-14"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    output_dir: "docs"
+  github_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE, fig.path = "docs/images/")
+
+library(embed)
+library(finetune)
+library(ggrepel)
+library(knitr)
+library(RColorBrewer)
+library(tidymodels)
+library(tidyverse)
+library(vip)
+library(xgboost)
+
+theme_set(theme_linedraw())
+```
+
+## Import Data
+```{r}
+tornado_df <- read_csv("data/tornado.csv")
+```
+
+## Exploratory Data Analysis
+
+The outcome of interest is the tornado's severity (i.e., its magnitude).
+
+```{r severity-dist}
+tornado_df |> 
+  ggplot(aes(x = mag)) +
+  geom_bar(fill = "darkorange") +
+  xlab("Magnitude") +
+  ylab("Count") +
+  ggtitle("Distribution of Tornado Severity") +
+  scale_y_continuous(labels = scales::comma_format())
+```
+
+Most tornadoes are mild, but some are devastating and occur rarely. Additionally, as shown below, none of the magnitude 5 earthquakes had been predicted as such.
+
+```{r severity-by-est-dist}
+tornado_df |> 
+  ggplot(aes(x = mag, fill = fc)) +
+  geom_bar(position = position_dodge(preserve = "single")) +
+  xlab("Magnitude") +
+  ylab("Count") +
+  ggtitle("Distribution of Tornado Severity by \nWhether or Not the Magnitude was Esimated") +
+  scale_y_log10(labels = scales::comma_format()) +
+  labs(fill = "Magnitude Estimated")
+```
+
+The magnitude is a numeric value but not continuous. 
+
+- To predict it, we could treat this exercise as a classifiation problem, but doing so would lose information regarding the ordinality of the magnitude. 
+- An ordered logistic / probit regression is an option (using `MASS::polr()`). 
+- Treating the data-generating process as one that produces counts would lend itself to Poisson regression (using `poissonreg::poissonreg()`). However, both approaches risk failing to capture non-linearity in the data. 
+- XGBoost seems like a suitable option, but doing so requires us to treat the magnitude (the outcome of interest) as a continuous outcome. This is the model I have chosen to use. 
+
+```{r mag-num-by-state}
+tornado_df |> 
+  group_by(st) |> 
+  summarise(mean_mag = mean(mag, na.rm = TRUE),
+            n = n()) |> 
+  ggplot(aes(x = n, y = mean_mag, label = st)) +
+  geom_point(color = "darkred") +
+  geom_text_repel(color = "darkred") +
+  xlab("Total Number of Tornadoes") +
+  ylab("Mean Magnitude") +
+  ggtitle("Mean Magnitude vs. Total Number of Tornadoes by State") +
+  scale_x_continuous(labels = scales::comma_format())
+```
+
+State information is clearly associated with magnitude. We can capture this signal using effect encodings.
+
+```{r inj-mag-dist}
+tornado_df |> 
+  filter(!is.na(mag)) |>
+  mutate(mag = factor(mag)) |> 
+  ggplot(aes(x = mag, y = inj, fill = mag)) +
+  geom_boxplot(alpha = 0.5, show.legend = FALSE) +
+  scale_y_log10(trans = scales::pseudo_log_trans(base = 10),
+                labels = scales::comma_format()) +
+  scale_fill_brewer(palette = "Set3") +
+  xlab("Magnitude") + 
+  ylab("Number of Injuries") +
+  ggtitle("Injuries vs. Tornado Magnitude")
+```
+
+As expected, higher magnitude earthquakes are associated with more injuries, though plenty of outliers exist. We see similar trends for fatalities, as shown below, but the effect is dampened.
+
+```{r fat-mag-dist}
+tornado_df |> 
+  filter(!is.na(mag)) |>
+  mutate(mag = factor(mag)) |> 
+  ggplot(aes(x = mag, y = fat, fill = mag)) +
+  geom_boxplot(alpha = 0.5, show.legend = FALSE) +
+  scale_y_log10(trans = scales::pseudo_log_trans(base = 10),
+                labels = scales::comma_format()) +
+  scale_fill_brewer(palette = "Set2") +
+  xlab("Magnitude") + 
+  ylab("Number of Fatalities") +
+  ggtitle("Fatalities vs. Tornado Magnitude")
+```
+
+## Set Up Framework
+
+```{r}
+# Defining Training (Analysis and Assessment) Datasets and Test Sets
+set.seed(1234)
+
+tornado_split_df <- 
+ tornado_df |> 
+  filter(!is.na(mag),
+         !is.na(loss)) |>
+  initial_split(strata = mag) # default 75% train, 25% test
+
+tornado_train <- training(tornado_split_df)
+tornado_test <- testing(tornado_split_df)
+
+# xval resamples
+set.seed(123)
+tornado_folds <- vfold_cv(tornado_train, strata = mag)
+tornado_folds # 10 folds by default
+```
+
+## Pre-Processing and Feature Engineering
+
+```{r}
+tornado_recipe <- 
+  recipe(mag ~ date + st + inj + fat + len + wid + ns,
+       data = tornado_train) |> 
+  # maps states to effect on the outcome
+  step_lencode_glm(st, outcome = vars(mag)) |> 
+  step_date(date, features = c("month", "year"), keep_original_cols = FALSE) |> 
+  # change existing nominal variables to dummy / indicators
+  step_dummy(all_nominal_predictors())
+  
+tornado_recipe 
+```
+
+Here, we are modeling the tornado's magnitude as a function of:
+
+* `date` - When the tornado occurred
+* `st` - The state in which the tornado started
+* `inj` - The number of injuries caused by the tornado
+* `fat` - The number of fatalities
+* `len` - The length of the tornado (measured in miles)
+* `wid` - The width of the tornado (measured in yards)
+* `ns` - The number of states affected by the tornado
+
+```{r}
+# For debugging
+prep(tornado_recipe) |> bake(new_data = NULL) |> glimpse()
+```
+
+## Model Specification and Hyperparameter Tuning via Racing
+
+```{r}
+xgb_details <- 
+  boost_tree(
+    trees = tune(),
+    min_n = tune(), 
+    mtry = tune(),
+    learn_rate = 0.005, # shrinkage
+    engine = "xgboost"
+  ) |> 
+  set_mode("regression")
+
+xgb_workflow <- workflow(preprocessor = tornado_recipe, spec = xgb_details)
+xgb_workflow
+```
+
+* The hyperparameters being tuned via grid search are:
+  * `trees` - The number of trees used in the ensemble.
+  * `min_n` - The minimum number of observations required at a node before the node is split further.
+  * `mtry` - The number of predictors randomly sampled at each split during tree model creation. 
+
+The `learn_rate` was set to `0.005` to keep local computations tractable. 
+
+The hyperparameters are selected and tuned via racing in which unpromising parameters are eliminated (based on the outcomes of ANOVA) to save processing time. 
+
+The model runs one set of hyperparameters on each of the 10 cross-validation folds through racing. Poor-performing hyperparameters (based on the outcomes of ANOVA) are eliminated to save processing time. The process continues until the best hyperparameters have been identified. 
+
+```{r, xgb-tuning, cache = TRUE}
+set.seed(456)
+
+xgb_tuning_rs <- tune_race_anova(
+  xgb_workflow, 
+  resamples = tornado_folds, # used for tuning
+  grid = 20,
+  # metrics = "rmse",
+  control = control_race(verbose_elim = TRUE)
+)
+```
+
+## Race Results, Hyperparameter Configuration, and Model Finalization
+
+```{r race-results}
+collect_metrics(xgb_tuning_rs)
+
+plot_race(xgb_tuning_rs) +
+  ggtitle("XGBoost HyperParameter Tuning Race Results")
+
+select_best(xgb_tuning_rs, metric = "rmse")
+```
+
+Using rmse as our evaluation metric, the hyperparameters for the best model were found as shown above. 
+
+## Model Fit and Performance
+
+With the hyperparameters tuned, we can now fit the model once on the full set of training data and evaluate its performance on the test data. 
+
+```{r model-fitting, cache = TRUE}
+tornado_fit <- 
+  xgb_workflow |> 
+  finalize_workflow(select_best(xgb_tuning_rs, metric = "rmse")) |> 
+  last_fit(tornado_split_df)
+```
+
+```{r}
+collect_metrics(tornado_fit) # results on testing data
+```
+
+The outcome metrics do not suggest that we have overfit the model in training.
+
+```{r pred-mag-dist}
+collect_predictions(tornado_fit) |> 
+  ggplot(aes(x = .pred)) +
+  geom_histogram(fill = "darkgreen", col = "white") +
+  xlab("Magnitude Prediction") +
+  ylab("Count") +
+  ggtitle("Distribution of Predicted Magnitudes")
+```
+
+Though we treated the magnitude as a continouous variable, we have not predicted many magnitudes less than 0. The majority of the mass of the distribution of predicted magnitudes is concentrated further to the right than the true values are. In other words, we are predicting low-magnitude tornadoes to be higher in magnitude and higher-magnitude tornadoes as lower in magnitude. The plot below demonstrates this aspect of the model's performance more clearly.
+
+```{r pred-vs-actual-mag}
+collect_predictions(tornado_fit) |> 
+  mutate(mag = factor(mag)) |> 
+  ggplot(aes(x = mag, y = .pred, fill = mag)) +
+  geom_boxplot(alpha = 0.6, show.legend = FALSE) +
+  scale_fill_brewer(palette = "Set2") +
+  xlab("Actual Magnitude") +
+  ylab("Predicted Magnitude") +
+  ggtitle("Predicted vs. Actual Tornado Magnitudes")
+```
+
+```{r feat-imp-plot}
+extract_workflow(tornado_fit) |> 
+  extract_fit_parsnip() |> 
+  vip(num_features = 10) +
+  geom_bar(stat = "identity", fill = "goldenrod") +
+  ylab("Feature") +
+  ggtitle("XGBoost Feature Importance")
+```
+
+The features deemed important by the model are the following:
+* The number of injuries 
+* The length of the tornado 
+* The year in which the tornado occurred
+* The width of the tornado
+* The number of fatalities resulting from the tornado
+* The state in which the tornado started
+* Month-level data
+
+These predictors behave as expected. The importance of the state variable suggests the the effect encoding was sensible.
+
+
+```{r, include = FALSE, eval = FALSE}
+# Render HTML document to the "docs" directory
+# rmarkdown::render("analysis.Rmd", 
+#                   output_format = "html_document", 
+#                   output_dir = "docs")
+
+# Render GitHub document to the "docs" directory
+# rmarkdown::render("analysis.Rmd",
+#                  output_format = "github_document")
+
+# Move GitHub document to the docs folder
+# file.rename("analysis.md", "docs/analysis.md")
+```
+
