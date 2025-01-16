@@ -9,8 +9,12 @@ The data document measurements associated with 68,693 tornadoes from 1950 to 202
 The analysis includes some exploratory data analysis, feature engineering,
 model specification, hyperparameter tuning, and model evaluation.
 
-The model predicts the magnitude of a tornado severity using XGBoost with a
-number of tuned hyperparameters and effect encodings for state-level information.
+The model predicts a number of predictors, including effect encodings for state-level data to predict the 
+magnitude of tornadoes via:
+
+* XGBoost  (with a number of tuned hyperparameters)
+* Standard Poisson Regression
+* Zero-Inflated Poisson Regression
 
 ## Project Structure
 - `analysis.Rmd`: Analysis and modeling 
@@ -27,16 +31,17 @@ number of tuned hyperparameters and effect encodings for state-level information
      "finetune",
      "ggrepel",
      "knitr",
-     "tidyverse",
-     "here",
+     "kableExtra",
+     "poissonreg",
+     "pscl",
+     "RColorBrewer",
      "rmarkdown",
-     "knitr",
-     "RColorBrewer"
      "tidymodels",
-     "tidyverse"
+     "tidyverse",
      "vip",
      "xgboost"))
    ```
+   
 3. Open `analysis.Rmd` and run the analysis
 
 ## Viewing Results

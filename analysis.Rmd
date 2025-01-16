@@ -9,22 +9,30 @@ output:
     output_dir: "docs"
     toc_float: true
     code_folding: show
-    theme: simplex
+    theme: flatly
   github_document: default
 editor_options: 
   chunk_output_type: console
 ---
 
+## Background
+
+See the [README](https://github.com/vbashyakarla/tornado-mag/tree/main?tab=readme-ov-file#tornado-severity) file in this repository for background information. Below, a few models are constructed to predict tornado severity, and their performance is evaluated.
+
 ## Setup
 
 ```{r setup, include=TRUE, message=FALSE}
-knitr::opts_chunk$set(echo = TRUE, fig.path = "docs/images/")
+knitr::opts_chunk$set(echo = TRUE, fig.path = "docs/images/", cache = TRUE)
 
 library(embed)
 library(finetune)
 library(ggrepel)
+library(kableExtra)
 library(knitr)
+library(poissonreg)
+library(pscl)
 library(RColorBrewer)
+library(rmarkdown)
 library(tidymodels)
 library(tidyverse)
 library(vip)
@@ -34,27 +42,51 @@ theme_set(theme_linedraw())
 ```
 
 ## Import Data
-```{r}
+```{r, echo = T, message = FALSE}
 tornado_df <- read_csv("data/tornado.csv")
 ```
+
+```{r, echo = F}
+tornado_df |> 
+  head() |> 
+  kable(caption = "Preview of tornado_df", format = "html") |> 
+  kable_styling(bootstrap_options = c("striped", "hover", "responsive"), 
+                full_width = F, 
+                position = "center") |> 
+  scroll_box(width = "100%")
+```
+
+
+Some of the column names are not self-explanatory. They are clarified below:
+
+* `om` - Tornado ID (within the year)
+* `stf` - State ID (specifically its Federal Information Processing Standards)
+* `mag` - Tornado magnitude
+* `inj` - Number of injuries
+* `fat` - Number of fatalities 
+* `loss` - Estimated property damage (measured in ranges pre-1996, and the data show the maximum of the range)
+* `slat`, `elat`  - Starting / ending latitude (likewise for longitude)
+* `ns` - Number of states impacted by tornado
+* `sn` through `f4` - Various IDs (disregarded here)
+* `fc` - Whether or not the magnitude of the tornado had been estimated
 
 ## Exploratory Data Analysis
 
 The outcome of interest is the tornado's severity (i.e., its magnitude).
 
-```{r severity-dist}
+```{r severity-dist, warning=FALSE}
 tornado_df |> 
   ggplot(aes(x = mag)) +
-  geom_bar(fill = "darkorange") +
+  geom_bar(fill = "darkorange", alpha = 0.7) +
   xlab("Magnitude") +
   ylab("Count") +
   ggtitle("Distribution of Tornado Severity") +
   scale_y_continuous(labels = scales::comma_format())
 ```
 
-Most tornadoes are mild, but some are devastating and occur rarely. Additionally, as shown below, none of the magnitude 5 earthquakes had been predicted as such.
+Most tornadoes are mild, but some are devastating and occur rarely. Additionally, as shown below, none of the magnitude 5 tornadoes had been predicted as such.
 
-```{r severity-by-est-dist}
+```{r severity-by-est-dist, warning=FALSE}
 tornado_df |> 
   ggplot(aes(x = mag, fill = fc)) +
   geom_bar(position = position_dodge(preserve = "single")) +
@@ -62,12 +94,13 @@ tornado_df |>
   ylab("Count") +
   ggtitle("Distribution of Tornado Severity by \nWhether or Not the Magnitude was Esimated") +
   scale_y_log10(labels = scales::comma_format()) +
-  labs(fill = "Magnitude Estimated")
+  labs(fill = "Magnitude Estimated") +
+  scale_fill_brewer(palette = "Accent")
 ```
 
 The magnitude is a numeric value but not continuous. 
 
-- To predict it, we could treat this exercise as a classifiation problem, but doing so would lose information regarding the ordinality of the magnitude. 
+- To predict it, we could treat this exercise as a classification problem, but doing so would lose information regarding the ordinality of the magnitude. 
 - An ordered logistic / probit regression is an option (using `MASS::polr()`). 
 - Treating the data-generating process as one that produces counts would lend itself to Poisson regression (using `poissonreg::poissonreg()`). However, both approaches risk failing to capture non-linearity in the data. 
 - XGBoost seems like a suitable option, but doing so requires us to treat the magnitude (the outcome of interest) as a continuous outcome. This is the model I have chosen to use. 
@@ -86,7 +119,8 @@ tornado_df |>
   scale_x_continuous(labels = scales::comma_format())
 ```
 
-State information is clearly associated with magnitude. We can capture this signal using effect encodings.
+This graph is clearly non-random. State information is associated with magnitude. As we know, some states 
+have more frequent occurrences of tornadoes, and the magnitude is not evenly distributed across states.
 
 ```{r inj-mag-dist}
 tornado_df |> 
@@ -95,6 +129,7 @@ tornado_df |>
   ggplot(aes(x = mag, y = inj, fill = mag)) +
   geom_boxplot(alpha = 0.5, show.legend = FALSE) +
   scale_y_log10(trans = scales::pseudo_log_trans(base = 10),
+                # helpful when visualizing log data when many observations are 0
                 labels = scales::comma_format()) +
   scale_fill_brewer(palette = "Set3") +
   xlab("Magnitude") + 
@@ -102,7 +137,7 @@ tornado_df |>
   ggtitle("Injuries vs. Tornado Magnitude")
 ```
 
-As expected, higher magnitude earthquakes are associated with more injuries, though plenty of outliers exist. We see similar trends for fatalities, as shown below, but the effect is dampened.
+As expected, higher magnitude tornadoes are associated with more injuries, though plenty of outliers exist. We see similar trends for fatalities, as shown below, but the effect is dampened.
 
 ```{r fat-mag-dist}
 tornado_df |> 
@@ -120,12 +155,14 @@ tornado_df |>
 
 ## Set Up Framework
 
+Because the outcome of interest is so unevenly distributed, training and test sets are built using stratified sampling. 
+
 ```{r}
 # Defining Training (Analysis and Assessment) Datasets and Test Sets
 set.seed(1234)
 
 tornado_split_df <- 
- tornado_df |> 
+  tornado_df |> 
   filter(!is.na(mag),
          !is.na(loss)) |>
   initial_split(strata = mag) # default 75% train, 25% test
@@ -141,19 +178,19 @@ tornado_folds # 10 folds by default
 
 ## Pre-Processing and Feature Engineering
 
-The code below uses a generalized linear model to estimate effect encodings for state-level variables.
+In order to capture state-specific effects without increasing the number of inputs by ~50 via one-hot encoding, we can use effect encodings. The code below uses linear embeddings for state-level variables via a generalized linear model. It also extracts month and year information from dates and one-hot encodes month inputs.
 
 ```{r}
 tornado_recipe <- 
   recipe(mag ~ date + st + inj + fat + len + wid + ns,
-       data = tornado_train) |> 
+         data = tornado_train) |> 
   # maps states to effect on the outcome
   step_lencode_glm(st, outcome = vars(mag)) |> 
   step_date(date, features = c("month", "year"), keep_original_cols = FALSE) |> 
   # change existing nominal variables to dummy / indicators
   step_dummy(all_nominal_predictors())
-  
-tornado_recipe 
+
+# tornado_recipe
 ```
 
 Here, we are modeling the tornado's magnitude as a function of:
@@ -175,7 +212,8 @@ As the output above shows, the state-level information is not one-hot encoded (w
 number of inputs dramatically) but remains a single column in which each value represents a state-specific
 deviation from the data when considering all states together. 
 
-## Model Specification and Hyperparameter Tuning via Racing
+## XGBoost
+### Model Specification and Hyperparameter Tuning via Racing
 
 ```{r}
 xgb_details <- 
@@ -193,9 +231,9 @@ xgb_workflow
 ```
 
 * The hyperparameters being tuned via grid search are:
-  * `trees` - The number of trees used in the ensemble.
-  * `min_n` - The minimum number of observations required at a node before the node is split further.
-  * `mtry` - The number of predictors randomly sampled at each split during tree model creation. 
+* `trees` - The number of trees used in the ensemble.
+* `min_n` - The minimum number of observations required at a node before the node is split further.
+* `mtry` - The number of predictors randomly sampled at each split during tree model creation. 
 
 The `learn_rate` was set to `0.005` to keep local computations tractable. 
 
@@ -215,20 +253,35 @@ xgb_tuning_rs <- tune_race_anova(
 )
 ```
 
-## Race Results, Hyperparameter Configuration, and Model Finalization
+### Race Results, Hyperparameter Configuration, and Model Finalization
 
-```{r race-results}
-collect_metrics(xgb_tuning_rs)
+```{r race-results, echo = FALSE}
+collect_metrics(xgb_tuning_rs) |> 
+  kable(caption = "XGBoost hyperparameter tuning results") |> 
+  kable_styling(bootstrap_options = c("striped", "hover", "responsive"), 
+                full_width = F, 
+                position = "center")
+
 
 plot_race(xgb_tuning_rs) +
-  ggtitle("XGBoost HyperParameter Tuning Race Results")
+  ggtitle("XGBoost Hyperparameter Tuning Race Results")
+```
 
+```{r, results = 'hide'}
 select_best(xgb_tuning_rs, metric = "rmse")
+```
+
+```{r, echo = FALSE}
+select_best(xgb_tuning_rs, metric = "rmse") |> 
+  kable(caption = "Best-performing XGBoost hyperparameters") |> 
+  kable_styling(bootstrap_options = c("striped", "hover", "responsive"), 
+                full_width = F, 
+                position = "center")
 ```
 
 Using rmse as our evaluation metric, the hyperparameters for the best model were found as shown above. 
 
-## Model Fit and Performance
+### XGBoost Model Fit and Performance
 
 With the hyperparameters tuned, we can now fit the model once on the full set of training data and evaluate its performance on the test data. 
 
@@ -239,22 +292,33 @@ tornado_fit <-
   last_fit(tornado_split_df)
 ```
 
-```{r}
-collect_metrics(tornado_fit) # results on testing data
+```{r, echo = FALSE}
+# results on testing data
+collect_metrics(tornado_fit) |> 
+  kable(caption = "XGBoost evaluation metrics on testing data") |> 
+  kable_styling(bootstrap_options = c("striped", "hover", "responsive"), 
+                full_width = F, 
+                position = "center")
+
+rsq_val <- collect_metrics(tornado_fit) |> 
+  filter(.metric == "rsq") |> 
+  pull(.estimate) |> 
+  scales::percent()
 ```
 
-The outcome metrics do not suggest that we have overfit the model in training.
+Given the hyperparameter tuning results, the outcome metrics here do not suggest that we have overfit the model in training. The model explains about `r rsq_val` of the variance in observed magnitudes. (For more on the risks of
+referencing r-squared metrics in the presence of non-linearity, see the "Model Comparison" section below.)
 
 ```{r pred-mag-dist}
 collect_predictions(tornado_fit) |> 
   ggplot(aes(x = .pred)) +
-  geom_histogram(fill = "darkgreen", col = "white") +
+  geom_histogram(bins = 30, fill = "#CAA1CC", col = "white") +
   xlab("Magnitude Prediction") +
   ylab("Count") +
   ggtitle("Distribution of Predicted Magnitudes")
 ```
 
-Though we treated the magnitude as a continouous variable, we have not predicted many magnitudes less than 0. The majority of the mass of the distribution of predicted magnitudes is concentrated further to the right than the true values are. In other words, we are predicting low-magnitude tornadoes to be higher in magnitude and higher-magnitude tornadoes as lower in magnitude. The plot below demonstrates this aspect of the model's performance more clearly.
+Though we treated the magnitude as a continuous variable, we have not predicted many magnitudes less than 0. Relative to the true distribution of magnitudes, this model outputs predictions that are biased in favor of mid-range values. In other words, we are predicting low-magnitude tornadoes to be higher in magnitude and higher-magnitude tornadoes as lower in magnitude. The plot below demonstrates this aspect of the model's performance more clearly.
 
 ```{r pred-vs-actual-mag}
 collect_predictions(tornado_fit) |> 
@@ -271,7 +335,7 @@ collect_predictions(tornado_fit) |>
 extract_workflow(tornado_fit) |> 
   extract_fit_parsnip() |> 
   vip(num_features = 10) +
-  geom_bar(stat = "identity", fill = "goldenrod") +
+  geom_bar(stat = "identity", fill = "#E6E8B7") +
   ylab("Feature") +
   ggtitle("XGBoost Feature Importance")
 ```
@@ -286,8 +350,126 @@ The features deemed important by the model are the following:
 * The state in which the tornado started
 * Month-level data
 
-These predictors behave as expected. The importance of the state variable suggests the the effect encoding was sensible.
+The importance of the state variable suggests that the effect encoding was sensible.
 
+Is it possible that some of the models considered above can outperform this model? Let's give another model a try. 
+
+## Poisson Regression
+
+Can we consider the process that generates the resulting magnitude distribution as a count-generating one that
+follows a Poisson distribution? As stated above, modeling the magnitude outcomes is also possible using Poisson regression, but doing so fails to capture non-linearity in the model. The code below estimates tornado magnitude using Poisson regression.
+
+### Poisson Regression via Generalized Linear Modeling Estimation
+
+```{r poisson-reg-glm}
+poisson_recipe <- tornado_recipe
+pr_spec <- poisson_reg(engine = "glm")
+pr_workflow <- workflow(preprocessor = poisson_recipe, spec = pr_spec)
+pr_fit <- pr_workflow |> fit(tornado_train)
+pr_preds <-  predict(pr_fit, tornado_test) |> bind_cols(tornado_test)
+pr_rs <- rmse(pr_preds, truth = mag, estimate = .pred) |> 
+  rbind.data.frame(rsq(pr_preds, truth = mag, estimate = .pred))
+```
+
+```{r, echo = FALSE}
+pr_rs |> 
+  kable(caption = "Poisson regression evaluation metrics on out-of-sample data") |> 
+  kable_styling(bootstrap_options = c("striped", "hover", "responsive"), 
+                full_width = F, 
+                position = "center")
+```
+
+
+### Zero-Inflated Poisson Regression
+
+Nearly half of all the tornadoes in this data have magnitude 0. Because Poisson regression predicts counts, perhaps an improvement can be realized with zero-inflated poisson regression, which models zero and non-zero counts separately since separate processes could be generating these two count outcomes. The code below predicts tornado magnitudes using zero-inflated Poisson regression. Only the top three features from XGBoost (i.e., the number of injuries, tornado length, and year) are used to predict zero-count outcomes.
+
+```{r, zero-inflated-poisson}
+# Zero-inflated Poisson 
+# one piece of the model predicts the 0s and the other predicts the counts
+
+zip_spec <- poisson_reg() |> set_engine("zeroinfl")
+zip_wf <- workflow(preprocessor = poisson_recipe) |> 
+  add_model(zip_spec, formula = mag ~ date_month_Feb + date_month_Mar + date_month_Apr + date_month_May + date_month_Jun + date_month_Jul + date_month_Aug + date_month_Sep + date_month_Oct + date_month_Nov + date_month_Dec + date_year + st + inj + fat + len + wid + ns | inj + len + date_year) # top 3 var imp
+zip_fit <- zip_wf %>% fit(tornado_train)
+zip_preds <- predict(zip_fit, tornado_test) |>  bind_cols(tornado_test)
+zip_rs <- rmse(zip_preds, truth = mag, estimate = .pred) |> 
+  rbind.data.frame(rsq(zip_preds, truth = mag, estimate = .pred))
+```
+
+```{r, echo = FALSE}
+zip_rs |> 
+  kable(caption = "Zero-inflated poissson regression evaluation metrics on testing data") |> 
+  kable_styling(bootstrap_options = c("striped", "hover", "responsive"), 
+                full_width = F, 
+                position = "center")
+```
+
+The zero-inflation improved performance metrics; the out-of-sample R-squared value increased while the RMSE decreased. It should be noted that warning output by the engine fitting the model may have resulted from the fact that some outcomes (e.g., magnitude = 5) are extremely rare, causing outcomes with probabilities of 0 to put generated. This could be addressed, or at least ameliorated, through the use of regularization and / or bootstrapping, as the coefficients resulting from the model may have high variance. 
+
+## Model Comparison
+
+```{r, eval = FALSE, include = FALSE}
+zip_preds |> 
+  mutate(mag = factor(mag)) |> 
+  ggplot(aes(x = mag, y = .pred, fill = mag)) +
+  geom_boxplot(alpha = 0.6, show.legend = FALSE) +
+  scale_fill_brewer(palette = "Set4") +
+  xlab("Actual Magnitude") +
+  ylab("Predicted Magnitude") +
+  ggtitle("Zero-Inflated Poisson Regression\nPredicted vs. Actual Tornado Magnitudes") +
+  ylim(0, 5)
+```
+
+```{r, warning=FALSE}
+collect_predictions(tornado_fit) |> mutate(model = "xgboost") |> select(mag, .pred, model) |> 
+  rbind.data.frame(pr_preds |> mutate(model = "poisson_reg") |> select(mag, .pred, model)) |> 
+  rbind.data.frame(zip_preds |> mutate(model = "zip_reg") |> select(mag, .pred, model)) |> 
+  mutate(mag = factor(mag)) |> 
+  ggplot(aes(x = mag, y = .pred, fill = model)) +
+  geom_boxplot(alpha = 0.6, show.legend = TRUE) +
+  scale_fill_brewer(palette = "Dark2") +
+  xlab("Actual Magnitude") +
+  ylab("Predicted Magnitude") +
+  ggtitle("Predicted vs. Actual Tornado Magnitudes by Model") +
+  ylim(0, 5)
+```
+
+Of the three models, XGBoost predictions appear the most adaptable and closest to the true magnitude observations.
+Based on this visualization alone, the performance of the two Poisson regression models are virtually 
+indistinguishable. Even for magnitude 5 tornado, these Poisson regression models appear to be outputting 
+predictions with a median magnitude of about 2 (vs. ~3.75 for XGBoost).
+
+```{r, echo = FALSE}
+agg_rs <- collect_metrics(tornado_fit) |>
+  select(-.config) |> 
+  mutate(model = "xgboost") |> 
+  rbind.data.frame(pr_rs |> mutate(model = "poisson_reg"), 
+                   zip_rs |> mutate(model = "zip_reg"))
+
+agg_rs |>
+  ggplot(aes(x = model, y = .estimate, fill = .metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  ggtitle("Reference Metrics by Model") +
+  xlab("Model") +
+  ylab("Metric") +
+  scale_fill_brewer(palette = "Pastel1", 
+                    name = "Out-of-Sample Metrics",
+                    labels = c("RMSE", paste(expression(R^2)))) +
+  coord_flip() 
+```
+
+The primary evaluation criterion used here is the root mean squared error. Based on this metric alone, XGBoost 
+appears to be the best-performing model. The results suggest that the underlying relationship between the
+magnitude of tornado and the features explored here are non-linear. Both poisson regression models fail to capture non-linear relationships, and their associated rmse metrics are considerably larger. The interpretation of 
+r-squared as a goodness of fit metric in the presence of non-linearity must be used with caution. It is presented
+here as a reference. If the Poisson regression models had markedly improved predictive outcomes, then it would have
+beeen reasonable to assume that the underlying relationship is comprised of fewer non-linear effects. 
+
+While both Poisson regression models here were trained without any additional improvements (e.g.,
+bootstrapping, cross-validation, etc.), it appears unlikely that these extensions would improve the models 
+sufficiently to overcome their performance deficit relative to XGBoost. Still, enlisting these techniques may have 
+generated more stable coefficients in the zero-inflated Poisson regression, as described above. 
 
 ```{r, include = FALSE, eval = FALSE}
 # Render HTML document to the "docs" directory

@@ -43,26 +43,33 @@
         <h1>Tornado Magnitude Prediction</h1>
         
         <h2>Project Overview</h2>
-        <p>This project contains an exercise in modeling tornado severity. The analysis was performed in R.
+        <p>This project contains an exercise in modeling tornado severity. The analysis was performed in R
+        and inspired by Tidy Tuesday.
           <br>
           <br>
         Tornadoes were a regular occurence during my childhood in Missouri and Kansas, so I couldn't pass up an 
         opportunity to analyze tornado-related data. As the repo's <a href="https://github.com/vbashyakarla/tornado-mag/tree/main?tab=readme-ov-file#tornado-severity">
-          READ ME</a> states, this data was originally compiled from the Severe 
+          README</a> states, this data was originally compiled from the Severe 
           Weather Maps, Graphics, and Data <a href="https://www.spc.noaa.gov/wcm/#data"> page</a>
           of the National Oceanic and Atmospheric Administration's National 
-          Weather Service Storm Prediction Center. The data document measurements associated with 68,693 tornadoes from 
-          1950 to 2022.
+          Weather Service Storm Prediction Center. The data document measurements associated with 68,693 tornadoes 
+          from 1950 to 2022.
           <br>
           <br>
-          The analysis includes some exploratory data analysis, feature engineering, model specification, 
-          hyperparameter tuning, and model evaluation. The model predicts the magnitude of a tornado severity 
-          using XGBoost with a number of tuned hyperparameters and effect encodings for state-level information.
+          The analysis includes some exploratory data analysis, feature engineering, and modeling. Tornado 
+          magnitudes are predicted using:
+          
+          <ul>
+            <li>XGBoost  (with a number of tuned hyperparameters)</li>
+            <li>Standard Poisson Regression</li>
+            <li>Zero-Inflated Poisson Regression</li>
+          </ul>
+
         </p>
 
         <h2>Related Links</h2>
         <ul>
-            <li><a href="https://vbashyakarla.github.io/tornado-mag/analysis.html">Analysis</a></li>
+            <li><a href="https://github.com/vbashyakarla/tornado-mag/blob/main/analysis.Rmd">Code</a></li>
             <li><a href="https://github.com/vbashyakarla/tornado-mag">GitHub Repo</a></li>
             <li><a href="https://github.com/vbashyakarla/tornado-mag/tree/main/data">Source Data</a></li>
 
